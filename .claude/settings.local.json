@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(& \"F:\\\\random\\\\codes\\\\small random projs\\\\Pyke\\\\build\\\\Release\\\\pyke.exe\" \"D:\\\\personal\\\\projs\\\\code\\\\Infinite-Landscapes\\\\infinite_landscapes.pyke\")"
+    ]
+  }
+}
