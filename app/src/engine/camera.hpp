@@ -11,7 +11,7 @@ public:
 		glm::mat4 invPVMatrix;
 	};
 
-	Camera(glm::vec3 pos, glm::vec3 dir, float fov = 70.0f, float near = 0.1f, float far = 1000.0f);
+	Camera(glm::vec3 pos, glm::vec3 dir, float fov = 70.0f, float near = 0.1f, float far = 10000.0f);
 
 	void move(glm::vec3 dir);
 	void lookAt(glm::vec3 target);
@@ -25,6 +25,8 @@ public:
 	[[nodiscard]] glm::vec3 getPosition() const;
 	[[nodiscard]] glm::vec4 getPositionV4() const;
 	[[nodiscard]] glm::vec3 getDir() const;
+	[[nodiscard]] glm::vec3 getRight() const;
+	[[nodiscard]] glm::vec3 getUp() const;
 
     [[nodiscard]] glm::vec2 getTiledPosition(float p_TileSize) const;
 

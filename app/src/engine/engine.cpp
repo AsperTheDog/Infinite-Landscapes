@@ -18,9 +18,14 @@ constexpr bool g_AssertOnError = true;
 struct UniformData {
     alignas(16) glm::mat4 VPMatrix;
     alignas(16) std::array<glm::vec4, 6> frustumPlanes;
+    alignas(16) glm::vec4 cameraRight;
+    alignas(16) glm::vec4 cameraUp;
     alignas(8) glm::vec2 globalWorldOffset;
+    alignas(8) glm::vec2 viewportSize;
     alignas(4) float baseBlockScale;
+    alignas(4) float meshletPixelTarget;
     alignas(4) uint32_t gridSize;
+    alignas(4) uint32_t edgeSnapEnabled;
 };
 
 static VkResult createDebugUtilsMessengerEXT(const VkInstance p_Instance, const VkDebugUtilsMessengerCreateInfoEXT* p_CreateInfo, const VkAllocationCallbacks* p_Allocator, VkDebugUtilsMessengerEXT* p_DebugMessenger)
@@ -274,7 +279,7 @@ void Engine::recreateSwapchain(Window::Size p_Size)
     l_SwapchainCreateInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     l_SwapchainCreateInfo.preTransform = l_Capabilities.currentTransform;
     l_SwapchainCreateInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    l_SwapchainCreateInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    l_SwapchainCreateInfo.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
     l_SwapchainCreateInfo.clipped = VK_TRUE;
     l_SwapchainCreateInfo.oldSwapchain = m_Swapchain;
 
@@ -313,6 +318,87 @@ void Engine::recreateSwapchain(Window::Size p_Size)
 		l_ImageViewCreateInfo.subresourceRange.layerCount = 1;
 		VULKAN_TRY(m_DeviceTable.vkCreateImageView(m_Device, &l_ImageViewCreateInfo, nullptr, &m_SwapchainImageViews[l_Index]));
 		spdlog::debug("Created image view (ID: {}) for swapchain image (ID: {})", fmt::ptr(m_SwapchainImageViews[l_Index]), fmt::ptr(m_SwapchainImages[l_Index]));
+    }
+
+    destroyDepthResources();
+    createDepthResources(l_Extent);
+}
+
+uint32_t Engine::findMemoryType(const uint32_t p_TypeFilter, const VkMemoryPropertyFlags p_Properties) const
+{
+    VkPhysicalDeviceMemoryProperties l_MemProps;
+    vkGetPhysicalDeviceMemoryProperties(m_PhysicalDevice, &l_MemProps);
+    for (uint32_t i = 0; i < l_MemProps.memoryTypeCount; ++i)
+    {
+        if ((p_TypeFilter & (1u << i)) && (l_MemProps.memoryTypes[i].propertyFlags & p_Properties) == p_Properties)
+        {
+            return i;
+        }
+    }
+    throw std::runtime_error("Failed to find suitable memory type for depth image");
+}
+
+void Engine::createDepthResources(const VkExtent2D p_Extent)
+{
+    VkImageCreateInfo l_ImageInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = s_DepthFormat,
+        .extent = { p_Extent.width, p_Extent.height, 1 },
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+    };
+    VULKAN_TRY(m_DeviceTable.vkCreateImage(m_Device, &l_ImageInfo, nullptr, &m_DepthImage));
+
+    VkMemoryRequirements l_MemReqs;
+    m_DeviceTable.vkGetImageMemoryRequirements(m_Device, m_DepthImage, &l_MemReqs);
+
+    VkMemoryAllocateInfo l_AllocInfo{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = l_MemReqs.size,
+        .memoryTypeIndex = findMemoryType(l_MemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+    };
+    VULKAN_TRY(m_DeviceTable.vkAllocateMemory(m_Device, &l_AllocInfo, nullptr, &m_DepthMemory));
+    VULKAN_TRY(m_DeviceTable.vkBindImageMemory(m_Device, m_DepthImage, m_DepthMemory, 0));
+
+    VkImageViewCreateInfo l_ViewInfo{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = m_DepthImage,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = s_DepthFormat,
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        }
+    };
+    VULKAN_TRY(m_DeviceTable.vkCreateImageView(m_Device, &l_ViewInfo, nullptr, &m_DepthImageView));
+    spdlog::debug("Created depth image (ID: {}) and view (ID: {})", fmt::ptr(m_DepthImage), fmt::ptr(m_DepthImageView));
+}
+
+void Engine::destroyDepthResources()
+{
+    if (m_DepthImageView != VK_NULL_HANDLE)
+    {
+        m_DeviceTable.vkDestroyImageView(m_Device, m_DepthImageView, nullptr);
+        m_DepthImageView = VK_NULL_HANDLE;
+    }
+    if (m_DepthImage != VK_NULL_HANDLE)
+    {
+        m_DeviceTable.vkDestroyImage(m_Device, m_DepthImage, nullptr);
+        m_DepthImage = VK_NULL_HANDLE;
+    }
+    if (m_DepthMemory != VK_NULL_HANDLE)
+    {
+        m_DeviceTable.vkFreeMemory(m_Device, m_DepthMemory, nullptr);
+        m_DepthMemory = VK_NULL_HANDLE;
     }
 }
 
@@ -652,7 +738,17 @@ void Engine::init(const bool p_DebugEnabled)
         VkPipelineRenderingCreateInfo renderingCreateInfo{
 		    .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
 		    .colorAttachmentCount = 1,
-		    .pColorAttachmentFormats = &m_SwapchainFormat.format
+		    .pColorAttachmentFormats = &m_SwapchainFormat.format,
+            .depthAttachmentFormat = s_DepthFormat
+        };
+
+        VkPipelineDepthStencilStateCreateInfo l_DepthStencilState{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+            .depthTestEnable = VK_TRUE,
+            .depthWriteEnable = VK_TRUE,
+            .depthCompareOp = VK_COMPARE_OP_LESS,
+            .depthBoundsTestEnable = VK_FALSE,
+            .stencilTestEnable = VK_FALSE
         };
 
 		VkPipelineViewportStateCreateInfo l_ViewportState{ .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
@@ -702,7 +798,7 @@ void Engine::init(const bool p_DebugEnabled)
 	    pipelineCreateInfo.pRasterizationState = &l_RasterizationState;
 	    pipelineCreateInfo.pMultisampleState = &l_MultisampleState;
 	    pipelineCreateInfo.pColorBlendState = &l_ColorBlendState;
-		pipelineCreateInfo.pDepthStencilState = nullptr;
+		pipelineCreateInfo.pDepthStencilState = &l_DepthStencilState;
 		pipelineCreateInfo.pDynamicState = &l_DynamicState;
         
 	    pipelineCreateInfo.layout = m_PipelineLayout;
@@ -774,10 +870,9 @@ void Engine::imguiDraw(const uint32_t p_FrameIndex)
 
     {
         ImGui::Begin("Controls");
-        ImGui::InputInt("Num Cascades", reinterpret_cast<int*>(&m_ImguiNumCascades));
 
-        static constexpr const char* l_GridSizeLabels[] = { "8", "16", "32", "64", "128" };
-        static constexpr uint32_t l_GridSizeValues[] = { 8, 16, 32, 64, 128 };
+        static constexpr const char* l_GridSizeLabels[] = { "16", "32", "64", "128" };
+        static constexpr uint32_t l_GridSizeValues[] = { 16, 32, 64, 128 };
         int l_GridSizeIdx = 0;
         for (int i = 0; i < IM_ARRAYSIZE(l_GridSizeValues); ++i)
         {
@@ -792,7 +887,11 @@ void Engine::imguiDraw(const uint32_t p_FrameIndex)
             m_ImguiGridSize = l_GridSizeValues[l_GridSizeIdx];
         }
 
+        ImGui::SliderFloat("Base Chunk Scale", &m_ImguiBaseBlockScale, 1.0f, 64.0f, "%.1f m");
+        ImGui::SliderFloat("Meshlet Pixel Target", &m_ImguiMeshletPixelTarget, 8.0f, 256.0f, "%.0f px");
+
 		ImGui::Checkbox("Wireframe Mode", &m_ImguiWireframe);
+        ImGui::Checkbox("Edge Snap (LOD stitching)", &m_ImguiEdgeSnap);
 
         bool l_FreezeFrustum = m_Camera.isFrustumFrozen();
         if (ImGui::Checkbox("Freeze Frustum", &l_FreezeFrustum))
@@ -869,10 +968,23 @@ void Engine::run()
                 .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 }
             };
 
+            VkImageMemoryBarrier2 l_DepthBarrier{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                .srcAccessMask = 0,
+                .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                .image = m_DepthImage,
+                .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 }
+            };
+
+            VkImageMemoryBarrier2 l_InitialBarriers[] = { l_ImageBarrier, l_DepthBarrier };
             VkDependencyInfo l_DepInfo{
                 .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                .imageMemoryBarrierCount = 1,
-                .pImageMemoryBarriers = &l_ImageBarrier
+                .imageMemoryBarrierCount = 2,
+                .pImageMemoryBarriers = l_InitialBarriers
             };
 
             vkCmdPipelineBarrier2(l_Frame.commandBuffer, &l_DepInfo);
@@ -886,12 +998,22 @@ void Engine::run()
                 .clearValue = {.color = { 0.0f, 0.0f, 0.1f, 1.0f } }
             };
 
+            VkRenderingAttachmentInfo l_DepthAttachment{
+                .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                .imageView = m_DepthImageView,
+                .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                .clearValue = {.depthStencil = { 1.0f, 0 } }
+            };
+
             VkRenderingInfo l_RenderingInfo{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
                 .renderArea = {.offset = {.x = 0, .y = 0}, .extent = {.width = m_Window.getSize().width, .height = m_Window.getSize().height } },
                 .layerCount = 1,
                 .colorAttachmentCount = 1,
-                .pColorAttachments = &l_ColorAttachment
+                .pColorAttachments = &l_ColorAttachment,
+                .pDepthAttachment = &l_DepthAttachment
             };
 
             vkCmdBeginRendering(l_Frame.commandBuffer, &l_RenderingInfo);
@@ -910,9 +1032,14 @@ void Engine::run()
 
             UniformData l_UniformData{
 				.VPMatrix = m_Camera.getVPMatrix(),
+                .cameraRight = glm::vec4(m_Camera.getRight(), 0.0f),
+                .cameraUp = glm::vec4(m_Camera.getUp(), 0.0f),
                 .globalWorldOffset = glm::vec2(m_Camera.getPosition().x, m_Camera.getPosition().z),
-                .baseBlockScale = 1.0f,
-                .gridSize = m_ImguiGridSize
+                .viewportSize = glm::vec2(static_cast<float>(m_SwapchainExtent.width), static_cast<float>(m_SwapchainExtent.height)),
+                .baseBlockScale = m_ImguiBaseBlockScale,
+                .meshletPixelTarget = m_ImguiMeshletPixelTarget,
+                .gridSize = m_ImguiGridSize,
+                .edgeSnapEnabled = m_ImguiEdgeSnap ? 1u : 0u
             };
 			memcpy(l_UniformData.frustumPlanes.data(), m_Camera.getFrustumPlanes(), sizeof(glm::vec4) * 6);
 
@@ -927,9 +1054,7 @@ void Engine::run()
             vkCmdBindPipeline(l_Frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_MeshPipeline);
             vkCmdPushConstants(l_Frame.commandBuffer, m_PipelineLayout, VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(l_UniformData), &l_UniformData);
 
-            const uint32_t l_CenterChunks = m_ImguiGridSize * m_ImguiGridSize;
-            const uint32_t l_RingChunks = (3 * l_CenterChunks) / 4;
-            const uint32_t l_TotalChunks = l_CenterChunks + l_RingChunks * (m_ImguiNumCascades - 1);
+            const uint32_t l_TotalChunks = m_ImguiGridSize * m_ImguiGridSize;
 
 			vkCmdDrawMeshTasksEXT(l_Frame.commandBuffer, l_TotalChunks, 1, 1);
 
@@ -937,14 +1062,23 @@ void Engine::run()
 
             vkCmdEndRendering(l_Frame.commandBuffer);
 
-            l_ImageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-            l_ImageBarrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-            l_ImageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
-            l_ImageBarrier.dstAccessMask = 0;
-            l_ImageBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            l_ImageBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-            vkCmdPipelineBarrier2(l_Frame.commandBuffer, &l_DepInfo);
+            VkImageMemoryBarrier2 l_PresentBarrier{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                .dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
+                .dstAccessMask = 0,
+                .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                .image = m_SwapchainImages[l_ImageIndex],
+                .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 }
+            };
+            VkDependencyInfo l_PresentDepInfo{
+                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .imageMemoryBarrierCount = 1,
+                .pImageMemoryBarriers = &l_PresentBarrier
+            };
+            vkCmdPipelineBarrier2(l_Frame.commandBuffer, &l_PresentDepInfo);
 
             vkEndCommandBuffer(l_Frame.commandBuffer);
             
@@ -1035,6 +1169,8 @@ void Engine::destroy()
 		}
 	}
     m_Frames.clear();
+
+    destroyDepthResources();
 
     if (m_Swapchain != VK_NULL_HANDLE)
     {

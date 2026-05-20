@@ -3,7 +3,7 @@
 #include <Vulkan/vk_enum_string_helper.h>
 #include <spdlog/spdlog.h>
 
-#ifdef _DEBUG
+#ifndef NDEBUG
 #define VULKAN_TRY(call)                                                                                                                                          \
         do                                                                                                                                                              \
 		{																																								\
@@ -14,5 +14,6 @@
             }                                                                                                                                                           \
         } while (false)
 
+#else
 #define VULKAN_TRY(call) call
 #endif

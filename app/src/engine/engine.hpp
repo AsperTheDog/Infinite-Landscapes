@@ -15,6 +15,9 @@ public:
 private:
 	void querySwapchainProperties();
 	void recreateSwapchain(Window::Size p_Size);
+	void createDepthResources(VkExtent2D p_Extent);
+	void destroyDepthResources();
+	uint32_t findMemoryType(uint32_t p_TypeFilter, VkMemoryPropertyFlags p_Properties) const;
 	void initImgui();
 	void imguiDraw(uint32_t p_FrameIndex);
 	void toggleImgui();
@@ -38,6 +41,11 @@ private:
 	std::vector<VkSemaphore> m_RenderFinishedSemaphores;
 	VkExtent2D m_SwapchainExtent{};
 
+	static constexpr VkFormat s_DepthFormat = VK_FORMAT_D32_SFLOAT;
+	VkImage m_DepthImage = VK_NULL_HANDLE;
+	VkDeviceMemory m_DepthMemory = VK_NULL_HANDLE;
+	VkImageView m_DepthImageView = VK_NULL_HANDLE;
+
 	struct FrameData {
 		VkCommandPool commandPool = VK_NULL_HANDLE;
 		VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
@@ -52,9 +60,11 @@ private:
 
 	bool m_ImguiActive = false;
 	VkDescriptorPool m_ImguiDescriptorPool = VK_NULL_HANDLE;
-	uint32_t m_ImguiNumCascades = 5;
-	uint32_t m_ImguiGridSize = 8;
+	uint32_t m_ImguiGridSize = 64;
+	float m_ImguiBaseBlockScale = 8.0f;
+	float m_ImguiMeshletPixelTarget = 64.0f;
 	bool m_ImguiWireframe = false;
+	bool m_ImguiEdgeSnap = true;
 
 
 	uint32_t m_CurrentFrameIndex = 0;

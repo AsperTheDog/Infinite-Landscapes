@@ -74,6 +74,16 @@ glm::vec3 Camera::getDir() const
 	return m_Front;
 }
 
+glm::vec3 Camera::getRight() const
+{
+	return m_right;
+}
+
+glm::vec3 Camera::getUp() const
+{
+	return glm::normalize(glm::cross(m_right, m_Front));
+}
+
 glm::vec2 Camera::getTiledPosition(const float p_TileSize) const
 {
     glm::vec2 l_CameraTile = glm::vec2(m_Position.x, m_Position.z);
@@ -329,5 +339,9 @@ void Camera::setFreezeFrustum(const bool freeze)
     {
         getFrustum();
     }
+	else if (!freeze && m_FreezeFrustum)
+	{
+		m_Frustum.frustumDirty = true;
+	}
     m_FreezeFrustum = freeze;
 }
