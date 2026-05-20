@@ -87,10 +87,13 @@ private:
 	bool m_ImguiActive = true;
 	VkDescriptorPool m_ImguiDescriptorPool = VK_NULL_HANDLE;
 	float m_ImguiRootSize = 16000.0f;
-	uint32_t m_ImguiMaxDepth = 12;
+	uint32_t m_ImguiMaxDepth = 10;
 	float m_ImguiMeshletPixelTarget = 85.0f;
 	bool m_ImguiWireframe = false;
 	bool m_ImguiEdgeSnap = true;
+	float m_ImguiScale = 100.0f;
+	float m_ImguiHeight = 100.0f;
+	float m_ImguiNormalDist = 1.0f;
 	
 	uint32_t m_CurrentFrameIndex = 0;
 

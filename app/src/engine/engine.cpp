@@ -40,6 +40,9 @@ struct GraphicsPC {
     alignas(4) float rootSize;
     alignas(4) uint32_t maxDepth;
     alignas(4) uint32_t edgeSnapEnabled;
+    alignas(4) float scale;
+    alignas(4) float height;
+    alignas(4) float normalDist;
 };
 
 static VkResult createDebugUtilsMessengerEXT(const VkInstance p_Instance, const VkDebugUtilsMessengerCreateInfoEXT* p_CreateInfo, const VkAllocationCallbacks* p_Allocator, VkDebugUtilsMessengerEXT* p_DebugMessenger)
@@ -755,7 +758,7 @@ void Engine::init(const bool p_DebugEnabled)
         std::vector<uint32_t> l_TaskSpirv;
         std::vector<uint32_t> l_MeshSpirv;
     	std::vector<uint32_t> l_FragSpirv;
-        std::array<const char*, 3> l_Modules = { "mesh", "compute", "generation" };
+        std::array<const char*, 4> l_Modules = { "mesh", "compute", "generation", "noise" };
         Shader l_ShaderBundle("src/shaders", l_Modules);
         try
         {
@@ -982,7 +985,7 @@ void Engine::imguiDraw(const uint32_t p_FrameIndex)
 
         ImGui::SliderFloat("Root Size", &m_ImguiRootSize, 512.0f, 32768.0f, "%.0f m");
         int l_MaxDepth = static_cast<int>(m_ImguiMaxDepth);
-        if (ImGui::SliderInt("Max Depth", &l_MaxDepth, 4, 12))
+        if (ImGui::SliderInt("Max Depth", &l_MaxDepth, 4, 10))
         {
             m_ImguiMaxDepth = static_cast<uint32_t>(l_MaxDepth);
         }
@@ -998,6 +1001,11 @@ void Engine::imguiDraw(const uint32_t p_FrameIndex)
             m_Camera.setFreezeFrustum(l_FreezeFrustum);
         }
 
+        ImGui::Separator();
+		ImGui::DragFloat("Noise Scale", &m_ImguiScale, 1.f, 1.0f, 1000.f, "%.3f");
+        ImGui::DragFloat("Noise Height", &m_ImguiHeight, 10.f, 10.0f, 1000.f, "%.3f");
+        ImGui::DragFloat("Normal Distance", &m_ImguiNormalDist, 0.001f, 0.001f, 5.f, "%.3f");
+
 		ImGui::End();
     }
 
@@ -1005,8 +1013,7 @@ void Engine::imguiDraw(const uint32_t p_FrameIndex)
         ImGui::Begin("Camera data");
 		ImGui::Text("Position: (%.2f, %.2f, %.2f)", m_Camera.getPosition().x, m_Camera.getPosition().y, m_Camera.getPosition().z);
 		ImGui::Text("Direction: (%.2f, %.2f, %.2f)", m_Camera.getDir().x, m_Camera.getDir().y, m_Camera.getDir().z);
-		ImGui::Text("Tile position: (%.2f, %.2f)", m_Camera.getTiledPosition(1.0f).x, m_Camera.getTiledPosition(1.0f).y);
-        ImGui::End();
+		ImGui::End();
 	}
 
     ImGui::Render();
@@ -1066,12 +1073,6 @@ void Engine::run()
 
             const float l_SmallestLeaf = m_ImguiRootSize / static_cast<float>(1u << m_ImguiMaxDepth);
 
-            // Snap rootOrigin to a coarser step than smallestLeaf so that chunks at
-            // depths within ±kStabilityLevels of the smallest stay WORLD-STABLE across
-            // snaps. A depth-D chunk is stable iff (snap step) is a multiple of
-            // cellSize_D = smallestLeaf * 2^(maxDepth - D). Snapping at
-            // 2^kStabilityLevels * smallestLeaf stabilizes everything at depth
-            // (maxDepth - kStabilityLevels) or finer — i.e. the close LOD pyramid.
             constexpr uint32_t kStabilityLevels = 4;
             const float l_SnapStep = l_SmallestLeaf * static_cast<float>(1u << kStabilityLevels);
             const glm::vec3 l_CamPos = m_Camera.getPosition();
@@ -1231,12 +1232,16 @@ void Engine::run()
             scissor.offset = {.x = 0, .y = 0 };
             scissor.extent = m_SwapchainExtent;
 
-            GraphicsPC l_GPC{};
-            l_GPC.viewProjMatrix = m_Camera.getVPMatrix();
-            l_GPC.leafBuf = l_Frame.leafBuffer.address;
-            l_GPC.rootSize = m_ImguiRootSize;
-            l_GPC.maxDepth = m_ImguiMaxDepth;
-            l_GPC.edgeSnapEnabled = m_ImguiEdgeSnap ? 1u : 0u;
+            GraphicsPC l_GPC{
+                .viewProjMatrix = m_Camera.getVPMatrix(),
+                .leafBuf = l_Frame.leafBuffer.address,
+                .rootSize = m_ImguiRootSize,
+                .maxDepth = m_ImguiMaxDepth,
+                .edgeSnapEnabled = m_ImguiEdgeSnap ? 1u : 0u,
+				.scale = m_ImguiScale,
+				.height = m_ImguiHeight,
+				.normalDist = m_ImguiNormalDist
+            };
 
             vkCmdSetScissor(l_Frame.commandBuffer, 0, 1, &scissor);
 			vkCmdSetViewport(l_Frame.commandBuffer, 0, 1, &viewport);
