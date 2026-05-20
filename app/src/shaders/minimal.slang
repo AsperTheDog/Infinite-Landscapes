@@ -29,79 +29,71 @@ struct ChunkConfiguration
     uint   ringLevel;
 };
 
-uint2 indexToCoordsForRing(uint i, uint gridSize)
+uint2 indexToCoordsBranchless(uint i)
 {
-    uint quarterSize = gridSize >> 2;
-    uint halfSize = gridSize >> 1;
-    uint threeQuarterSize = halfSize + quarterSize;
+    bool is_mid_or_bot = i >= 16;
+    bool is_bot = i >= 32;
 
-    uint topCount = quarterSize * gridSize;
-    uint midCount = halfSize * halfSize;
+    uint i_mid = i - 16;
+    uint i_bot = i - 32;
 
-    if (i < topCount)
-    {
-        uint y = i / gridSize;
-        uint x = i % gridSize;
-        return uint2(x, y);
-    }
-    else if (i < topCount + midCount)
-    {
-        uint i_mid = i - topCount;
-        uint y = (i_mid / halfSize) + quarterSize;
-        uint x_local = i_mid % halfSize;
-        uint x = (x_local < quarterSize) ? x_local : (x_local + halfSize);
-        return uint2(x, y);
-    }
-    else
-    {
-        uint i_bot = i - topCount - midCount;
-        uint y = (i_bot / gridSize) + threeQuarterSize;
-        uint x = i_bot % gridSize;
-        return uint2(x, y);
-    }
+    uint y_top = i >> 3;         
+    uint y_mid = (i_mid >> 2) + 2; 
+    uint y_bot = (i_bot >> 3) + 6; 
+
+    uint y = !is_mid_or_bot ? y_top : (!is_bot ? y_mid : y_bot);
+
+    uint x_top = i & 7;          
+    uint x_bot = i_bot & 7;      
+    
+    uint x_mid_local = i_mid & 3; 
+    uint hole_jump = (x_mid_local >> 1) << 2; 
+    uint x_mid = x_mid_local + hole_jump;
+
+    uint x = !is_mid_or_bot ? x_top : (!is_bot ? x_mid : x_bot);
+
+    return uint2(x, y);
 }
 
-ChunkConfiguration DecodeGlobalChunk(uint globalID, float baseScale, uint gridSize)
+ChunkConfiguration DecodeGlobalChunk(uint globalID, float baseScale)
 {
     ChunkConfiguration config;
     uint2 localCoords = uint2(0, 0);
 
-    uint centerCount = gridSize * gridSize;
-    uint ringCount = (3 * centerCount) >> 2;
-
-    if (globalID < centerCount)
+    if (globalID < 64) 
     {
         config.ringLevel = 0;
-        localCoords.x = globalID % gridSize;
-        localCoords.y = globalID / gridSize;
-    }
-    else
+        localCoords.x = globalID & 7;
+        localCoords.y = globalID >> 3;
+    } 
+    else 
     {
-        uint ringOffset = globalID - centerCount;
-        config.ringLevel = (ringOffset / ringCount) + 1;
-        uint localRingIndex = ringOffset % ringCount;
-
-        localCoords = indexToCoordsForRing(localRingIndex, gridSize);
+        uint ringOffset = globalID - 64;
+        config.ringLevel = (ringOffset / 48) + 1;
+        uint localRingIndex = ringOffset % 48;
+        
+        localCoords = indexToCoordsBranchless(localRingIndex);
     }
 
     config.scale = baseScale * float(1 << config.ringLevel);
-    config.gridCoords = int2(localCoords) - int2(gridSize >> 1, gridSize >> 1);
+    config.gridCoords = int2(localCoords) - int2(4, 4);
 
     return config;
 }
 
 bool IsChunkVisible(float3 chunkCenter, float chunkRadius)
 {
-    bool visible = true;
-    for (int i = 0; i < 6; ++i)
-    {
-        float dist = dot(ubo.frustumPlanes[i].xyz, chunkCenter) + ubo.frustumPlanes[i].w;
-        if (dist < -chunkRadius)
-        {
-            visible = false;
-        }
-    }
-    return visible;
+    return true; // Disable frustum culling for testing
+    //bool visible = true;
+    //for (int i = 0; i < 6; ++i)
+    //{
+    //    float dist = dot(ubo.frustumPlanes[i].xyz, chunkCenter) + ubo.frustumPlanes[i].w;
+    //    if (dist < -chunkRadius)
+    //    {
+    //        visible = false;
+    //    }
+    //}
+    //return visible;
 }
 
 groupshared TaskPayload s_payload;
@@ -114,7 +106,7 @@ void taskMain(uint3 groupID : SV_GroupID, uint threadID : SV_GroupIndex)
 
     if (threadID == 0)
     {
-        ChunkConfiguration chunk = DecodeGlobalChunk(groupID.x, ubo.baseBlockScale, ubo.gridSize);
+        ChunkConfiguration chunk = DecodeGlobalChunk(groupID.x, ubo.baseBlockScale);
 
         float2 snappedOffset = floor(ubo.globalWorldOffset / ubo.baseBlockScale) * ubo.baseBlockScale;
 

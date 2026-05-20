@@ -148,3 +148,20 @@ std::span<const char* const> Window::getRequiredInstanceExtensions() const
 		throw std::runtime_error("Failed to get required Vulkan extensions from SDL: " + std::string(SDL_GetError()));
 	return std::span{ l_Exts, l_ExtensionCount };
 }
+
+void Window::toggleMouseCaptured()
+{
+	m_MouseCaptured = !m_MouseCaptured;
+	SDL_SetWindowRelativeMouseMode(m_Window, m_MouseCaptured);
+
+	if (m_MouseCaptured)
+	{
+		SDL_ShowCursor();
+	}
+	else
+	{
+		SDL_HideCursor();
+	}
+
+	m_OnMouseCaptureChanged.emit(m_MouseCaptured);
+}

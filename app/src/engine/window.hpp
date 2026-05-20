@@ -42,20 +42,31 @@ public:
 
 	[[nodiscard]] std::span<const char* const> getRequiredInstanceExtensions() const;
 
+	Signal<float, float>& getOnMouseMoved() { return m_OnMouseMoved; }
+	Signal<uint32_t>& getOnKeyPressed() { return m_OnKeyPressed; }
+	Signal<uint32_t>& getOnKeyReleased() { return m_OnKeyReleased; }
+	Signal<uint32_t>& getOnMouseButtonPressed() { return m_OnMouseButtonPressed; }
+	Signal<uint32_t>& getOnMouseButtonReleased() { return m_OnMouseButtonReleased; }
+	Signal<float>& getOnMouseScrolled() { return m_OnMouseScrolled; }
+	Signal<float>& getOnEventsProcessed() { return m_OnEventsProcessed; }
+	Signal<bool>& getOnMouseCaptureChanged() { return m_OnMouseCaptureChanged; }
+
+	void toggleMouseCaptured();
+
 private:
 	SDL_Window* m_Window = nullptr;
 	VkSurfaceKHR m_Surface = VK_NULL_HANDLE;
 
 	Signal<Size> m_OnPixelResize;
 	Signal<Size> m_OnResize;
-	Signal<float, float> m_OnMouseMoved;		// relX, relY, isMouseCaptured
+	Signal<float, float> m_OnMouseMoved;			// relX, relY, isMouseCaptured
 	Signal<uint32_t> m_OnKeyPressed;				// key, isMouseCaptured
-	Signal<uint32_t> m_OnKeyReleased;			// key, isMouseCaptured
+	Signal<uint32_t> m_OnKeyReleased;				// key, isMouseCaptured
 	Signal<uint32_t> m_OnMouseButtonPressed;		// button, isMouseCaptured
-	Signal<uint32_t> m_OnMouseButtonReleased;	// button, isMouseCaptured
-	Signal<float> m_OnMouseScrolled;          // y, isMouseCaptured
-	Signal<float> m_OnEventsProcessed;        // delta
-	Signal<bool> m_OnMouseCaptureChanged;   // isMouseCaptured
+	Signal<uint32_t> m_OnMouseButtonReleased;		// button, isMouseCaptured
+	Signal<float> m_OnMouseScrolled;				// y, isMouseCaptured
+	Signal<float> m_OnEventsProcessed;				// delta
+	Signal<bool> m_OnMouseCaptureChanged;			// isMouseCaptured
 	
 	float m_PrevDelta = 0.f;
 	float m_Delta = 0.f;

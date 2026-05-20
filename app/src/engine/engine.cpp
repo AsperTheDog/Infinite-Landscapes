@@ -8,10 +8,20 @@
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_vulkan.h>
 
+#include <SDL3/SDL_keycode.h>
+
 #include "shader.hpp"
 #include "vk_base.hpp"
 
 constexpr bool g_AssertOnError = true;
+
+struct UniformData {
+    alignas(16) glm::mat4 VPMatrix;
+    alignas(16) std::array<glm::vec4, 6> frustumPlanes;
+    alignas(8) glm::vec2 globalWorldOffset;
+    alignas(4) float baseBlockScale;
+    alignas(4) uint32_t gridSize;
+};
 
 static VkResult createDebugUtilsMessengerEXT(const VkInstance p_Instance, const VkDebugUtilsMessengerCreateInfoEXT* p_CreateInfo, const VkAllocationCallbacks* p_Allocator, VkDebugUtilsMessengerEXT* p_DebugMessenger)
 {
@@ -92,6 +102,7 @@ static std::optional<VkPhysicalDevice> choosePhysicalDevice(const VkInstance p_I
 		// Find mesh shader support
 		bool l_MeshShaderSupport = false;
         bool l_SwapchainSupport = false;
+		bool l_ExtendedDynamicStateSupport = false;
         for (const auto& [extensionName, _] : l_AvailableExtensions)
         {
             if (strcmp(extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0)
@@ -102,7 +113,11 @@ static std::optional<VkPhysicalDevice> choosePhysicalDevice(const VkInstance p_I
 			{
 				l_SwapchainSupport = true;
 			}
-			if (l_MeshShaderSupport && l_SwapchainSupport)
+            if (strcmp(extensionName, VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME) == 0)
+            {
+                l_ExtendedDynamicStateSupport = true;
+            }
+			if (l_MeshShaderSupport && l_SwapchainSupport && l_ExtendedDynamicStateSupport)
 			{
 				break;
 			}
@@ -118,20 +133,35 @@ static std::optional<VkPhysicalDevice> choosePhysicalDevice(const VkInstance p_I
 			spdlog::debug("- Physical device (ID: {}) does not support swapchain extension, skipping", fmt::ptr(l_PhysicalDevice));
 			continue;
 		}
+		if (!l_ExtendedDynamicStateSupport)
+		{
+			spdlog::debug("- Physical device (ID: {}) does not support extended dynamic state extension, skipping", fmt::ptr(l_PhysicalDevice));
+            continue;
+		}
 
         VkPhysicalDeviceMeshShaderFeaturesEXT l_MeshFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
         VkPhysicalDeviceVulkan13Features l_Features13{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
         l_Features13.pNext = &l_MeshFeatures;
+		VkPhysicalDeviceExtendedDynamicState3FeaturesEXT l_ExtendedDynamicState3Features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT };
+		l_ExtendedDynamicState3Features.pNext = &l_Features13;
 
         VkPhysicalDeviceFeatures2 l_Features2{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-        l_Features2.pNext = &l_Features13;
+        l_Features2.pNext = &l_ExtendedDynamicState3Features;
         vkGetPhysicalDeviceFeatures2(l_PhysicalDevice, &l_Features2);
 
         bool l_SupportsMeshShaders = l_MeshFeatures.meshShader && l_MeshFeatures.taskShader;
 		bool l_SupportsFeatures13 = l_Features13.dynamicRendering && l_Features13.synchronization2;
-        if (!l_SupportsFeatures13 || !l_SupportsMeshShaders)
+		bool l_SupportDynamicPolygonMode = l_ExtendedDynamicState3Features.extendedDynamicState3PolygonMode;
+		bool l_SupportNonSolid = l_Features2.features.fillModeNonSolid;
+        if (!l_SupportsFeatures13 || !l_SupportsMeshShaders || !l_SupportNonSolid || !l_SupportDynamicPolygonMode)
         {
-			spdlog::debug("- Physical device (ID: {}) does not support required features (mesh shader support: {}, dynamic rendering support: {}, synchronization2 support: {}), skipping", fmt::ptr(l_PhysicalDevice), l_SupportsMeshShaders, l_Features13.dynamicRendering, l_Features13.synchronization2);
+			spdlog::debug("- Physical device (ID: {}) does not support required features (mesh shader support: {}, dynamic rendering support: {}, synchronization2 support: {}, fillModeNonSolid support: {}, dynamic polygon mode support: {}), skipping", 
+                fmt::ptr(l_PhysicalDevice), 
+                l_SupportsMeshShaders, 
+                l_Features13.dynamicRendering, 
+                l_Features13.synchronization2, 
+                l_SupportNonSolid, 
+                l_SupportDynamicPolygonMode);
 	        continue;
         }
 
@@ -467,9 +497,9 @@ void Engine::init(const bool p_DebugEnabled)
 		m_QueueFamilyIndex = l_QueueCreateInfo.queueFamilyIndex;
 		l_DeviceCreateInfo.pQueueCreateInfos = &l_QueueCreateInfo;
 
-		std::array<const char*, 2> l_DeviceExtensions = { VK_EXT_MESH_SHADER_EXTENSION_NAME, VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+		std::array<const char*, 3> l_DeviceExtensions = { VK_EXT_MESH_SHADER_EXTENSION_NAME, VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME };
 		l_DeviceCreateInfo.ppEnabledExtensionNames = l_DeviceExtensions.data();
-        l_DeviceCreateInfo.enabledExtensionCount = 2;
+        l_DeviceCreateInfo.enabledExtensionCount = 3;
 
         VkPhysicalDeviceMeshShaderFeaturesEXT l_MeshFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
         l_MeshFeatures.taskShader = VK_TRUE;
@@ -478,8 +508,12 @@ void Engine::init(const bool p_DebugEnabled)
         l_Features13.dynamicRendering = VK_TRUE;
 		l_Features13.synchronization2 = VK_TRUE;
         l_Features13.pNext = &l_MeshFeatures;
+		VkPhysicalDeviceExtendedDynamicState3FeaturesEXT l_ExtendedDynamicState3Features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT };
+		l_ExtendedDynamicState3Features.extendedDynamicState3PolygonMode = VK_TRUE;
+		l_ExtendedDynamicState3Features.pNext = &l_Features13;
         VkPhysicalDeviceFeatures2 l_DeviceFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-        l_DeviceFeatures.pNext = &l_Features13;
+        l_DeviceFeatures.features.fillModeNonSolid = VK_TRUE;
+        l_DeviceFeatures.pNext = &l_ExtendedDynamicState3Features;
 
         l_DeviceCreateInfo.pNext = &l_DeviceFeatures;
 
@@ -544,9 +578,9 @@ void Engine::init(const bool p_DebugEnabled)
     {
 		{
             VkPushConstantRange l_PushConstantRange{
-			    .stageFlags = VK_SHADER_STAGE_MESH_BIT_EXT,
+			    .stageFlags = VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT,
 			    .offset = 0,
-			    .size = sizeof(glm::vec4)
+			    .size = sizeof(UniformData)
             };
 
             VkPipelineLayoutCreateInfo l_LayoutInfo{
@@ -558,20 +592,30 @@ void Engine::init(const bool p_DebugEnabled)
 			spdlog::info("Created pipeline layout (ID: {}) with push constant range for mesh shader stage", fmt::ptr(m_PipelineLayout));
 		}
 
+        std::vector<uint32_t> l_TaskSpirv;
         std::vector<uint32_t> l_MeshSpirv;
     	std::vector<uint32_t> l_FragSpirv;
         Shader shaderBundle("src/shaders/mesh.slang");
         try
         {
+			l_TaskSpirv = shaderBundle.getSpirv("taskMain");
             l_MeshSpirv = shaderBundle.getSpirv("meshMain");
             l_FragSpirv = shaderBundle.getSpirv("fragmentMain");
-			spdlog::info("Loaded shader SPIR-V for mesh and fragment stages from shader bundle");
+			spdlog::info("Loaded shader SPIR-V for task, mesh, and fragment stages from shader bundle");
         }
 		catch (const std::exception& e)
 		{
 			spdlog::error("Failed to load shader: {}", e.what());
 			throw std::runtime_error("Failed to load shader");
 		}
+
+		VkShaderModuleCreateInfo taskCreateInfo{
+			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.codeSize = l_TaskSpirv.size() * sizeof(uint32_t),
+			.pCode = l_TaskSpirv.data()
+		};
+		VkShaderModule l_TaskModule;
+		vkCreateShaderModule(m_Device, &taskCreateInfo, nullptr, &l_TaskModule);
 
     	VkShaderModuleCreateInfo meshCreateInfo{
 		    .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -589,16 +633,21 @@ void Engine::init(const bool p_DebugEnabled)
 		VkShaderModule l_FragModule;
 		vkCreateShaderModule(m_Device, &fragCreateInfo, nullptr, &l_FragModule);
 
-        std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages{};
+        std::array<VkPipelineShaderStageCreateInfo, 3> shaderStages{};
         shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        shaderStages[0].stage = VK_SHADER_STAGE_MESH_BIT_EXT;
-        shaderStages[0].module = l_MeshModule;
+        shaderStages[0].stage = VK_SHADER_STAGE_TASK_BIT_EXT;
+        shaderStages[0].module = l_TaskModule;
         shaderStages[0].pName = "main";
 
         shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        shaderStages[1].module = l_FragModule;
+        shaderStages[1].stage = VK_SHADER_STAGE_MESH_BIT_EXT;
+        shaderStages[1].module = l_MeshModule;
         shaderStages[1].pName = "main";
+        
+        shaderStages[2].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        shaderStages[2].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        shaderStages[2].module = l_FragModule;
+        shaderStages[2].pName = "main";
 
         VkPipelineRenderingCreateInfo renderingCreateInfo{
 		    .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
@@ -613,9 +662,8 @@ void Engine::init(const bool p_DebugEnabled)
         VkPipelineRasterizationStateCreateInfo l_RasterizationState{ .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
         l_RasterizationState.depthClampEnable = VK_FALSE;
         l_RasterizationState.rasterizerDiscardEnable = VK_FALSE;
-        l_RasterizationState.polygonMode = VK_POLYGON_MODE_FILL;
         l_RasterizationState.lineWidth = 1.0f;
-        l_RasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
+        l_RasterizationState.cullMode = VK_CULL_MODE_NONE;
         l_RasterizationState.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         l_RasterizationState.depthBiasEnable = VK_FALSE;
 
@@ -632,13 +680,14 @@ void Engine::init(const bool p_DebugEnabled)
         l_ColorBlendState.attachmentCount = 1;
         l_ColorBlendState.pAttachments = &l_ColorBlendAttachment;
 
-        std::array<VkDynamicState, 2> l_DynamicStates = {
+        std::array<VkDynamicState, 3> l_DynamicStates = {
 		    VK_DYNAMIC_STATE_VIEWPORT,
-		    VK_DYNAMIC_STATE_SCISSOR
+		    VK_DYNAMIC_STATE_SCISSOR,
+            VK_DYNAMIC_STATE_POLYGON_MODE_EXT
         };
 
         VkPipelineDynamicStateCreateInfo l_DynamicState{ .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-        l_DynamicState.dynamicStateCount = static_cast<uint32_t>(std::size(l_DynamicStates));
+        l_DynamicState.dynamicStateCount = static_cast<uint32_t>(l_DynamicStates.size());
         l_DynamicState.pDynamicStates = l_DynamicStates.data();
 
 		VkGraphicsPipelineCreateInfo pipelineCreateInfo{ .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
@@ -661,6 +710,8 @@ void Engine::init(const bool p_DebugEnabled)
 
         VULKAN_TRY(vkCreateGraphicsPipelines(m_Device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &m_MeshPipeline));
 
+        vkDestroyShaderModule(m_Device, l_TaskModule, nullptr);
+		spdlog::debug("Destroyed shader module (ID: {}) for task shader stage", fmt::ptr(l_TaskModule));
 		vkDestroyShaderModule(m_Device, l_MeshModule, nullptr);
 		spdlog::debug("Destroyed shader module (ID: {}) for mesh shader stage", fmt::ptr(l_MeshModule));
 		vkDestroyShaderModule(m_Device, l_FragModule, nullptr);
@@ -674,10 +725,31 @@ void Engine::init(const bool p_DebugEnabled)
         initImgui();
         spdlog::info("Initialized ImGui for Vulkan");
     }
+
+    {
+        m_Window.getOnMouseMoved().connect(&m_Camera, &Camera::mouseMoved);
+        m_Window.getOnKeyPressed().connect(&m_Camera, &Camera::keyPressed);
+        m_Window.getOnKeyReleased().connect(&m_Camera, &Camera::keyReleased);
+        m_Window.getOnEventsProcessed().connect(&m_Camera, &Camera::updateEvents);
+        m_Window.getOnMouseCaptureChanged().connect(&m_Camera, &Camera::setMouseCaptured);
+        m_Window.getOnResize().connect(this, &Engine::recreateSwapchain);
+        m_Window.getOnMouseScrolled().connect(&m_Camera, &Camera::mouseScrolled);
+
+        m_Window.getOnKeyPressed().connect([this](const uint32_t p_Key)
+            {
+                if (p_Key == SDLK_O)
+                    toggleImgui();
+				else if (p_Key == SDLK_Q)
+					m_Window.toggleMouseCaptured();
+            });
+    }
 }
 
 void Engine::imguiDraw(const uint32_t p_FrameIndex)
 {
+	if (!m_ImguiActive)
+		return;
+
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
@@ -702,13 +774,51 @@ void Engine::imguiDraw(const uint32_t p_FrameIndex)
 
     {
         ImGui::Begin("Controls");
-        ImGui::ColorPicker4("Color Multiplier", &m_ColorMultiplier[0]);
+        ImGui::InputInt("Num Cascades", reinterpret_cast<int*>(&m_ImguiNumCascades));
+
+        static constexpr const char* l_GridSizeLabels[] = { "8", "16", "32", "64", "128" };
+        static constexpr uint32_t l_GridSizeValues[] = { 8, 16, 32, 64, 128 };
+        int l_GridSizeIdx = 0;
+        for (int i = 0; i < IM_ARRAYSIZE(l_GridSizeValues); ++i)
+        {
+            if (l_GridSizeValues[i] == m_ImguiGridSize)
+            {
+                l_GridSizeIdx = i;
+                break;
+            }
+        }
+        if (ImGui::Combo("Grid Size", &l_GridSizeIdx, l_GridSizeLabels, IM_ARRAYSIZE(l_GridSizeLabels)))
+        {
+            m_ImguiGridSize = l_GridSizeValues[l_GridSizeIdx];
+        }
+
+		ImGui::Checkbox("Wireframe Mode", &m_ImguiWireframe);
+
+        bool l_FreezeFrustum = m_Camera.isFrustumFrozen();
+        if (ImGui::Checkbox("Freeze Frustum", &l_FreezeFrustum))
+        {
+            m_Camera.setFreezeFrustum(l_FreezeFrustum);
+        }
+
 		ImGui::End();
     }
+
+	{
+        ImGui::Begin("Camera data");
+		ImGui::Text("Position: (%.2f, %.2f, %.2f)", m_Camera.getPosition().x, m_Camera.getPosition().y, m_Camera.getPosition().z);
+		ImGui::Text("Direction: (%.2f, %.2f, %.2f)", m_Camera.getDir().x, m_Camera.getDir().y, m_Camera.getDir().z);
+		ImGui::Text("Tile position: (%.2f, %.2f)", m_Camera.getTiledPosition(1.0f).x, m_Camera.getTiledPosition(1.0f).y);
+        ImGui::End();
+	}
 
     ImGui::Render();
     ImDrawData* l_DrawData = ImGui::GetDrawData();
     ImGui_ImplVulkan_RenderDrawData(l_DrawData, m_Frames[p_FrameIndex].commandBuffer);
+}
+
+void Engine::toggleImgui()
+{
+	m_ImguiActive = !m_ImguiActive;
 }
 
 void Engine::run()
@@ -798,12 +908,30 @@ void Engine::run()
             scissor.offset = { 0, 0 };
             scissor.extent = m_SwapchainExtent;
 
+            UniformData l_UniformData{
+				.VPMatrix = m_Camera.getVPMatrix(),
+                .globalWorldOffset = glm::vec2(m_Camera.getPosition().x, m_Camera.getPosition().z),
+                .baseBlockScale = 1.0f,
+                .gridSize = m_ImguiGridSize
+            };
+			memcpy(l_UniformData.frustumPlanes.data(), m_Camera.getFrustumPlanes(), sizeof(glm::vec4) * 6);
+
             vkCmdSetScissor(l_Frame.commandBuffer, 0, 1, &scissor);
 			vkCmdSetViewport(l_Frame.commandBuffer, 0, 1, &viewport);
 
+            if (m_ImguiWireframe)
+                vkCmdSetPolygonModeEXT(l_Frame.commandBuffer, VK_POLYGON_MODE_LINE);
+            else
+				vkCmdSetPolygonModeEXT(l_Frame.commandBuffer, VK_POLYGON_MODE_FILL);
+
             vkCmdBindPipeline(l_Frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_MeshPipeline);
-            vkCmdPushConstants(l_Frame.commandBuffer, m_PipelineLayout, VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(m_ColorMultiplier), &m_ColorMultiplier);
-            vkCmdDrawMeshTasksEXT(l_Frame.commandBuffer, 1, 1, 1);
+            vkCmdPushConstants(l_Frame.commandBuffer, m_PipelineLayout, VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 0, sizeof(l_UniformData), &l_UniformData);
+
+            const uint32_t l_CenterChunks = m_ImguiGridSize * m_ImguiGridSize;
+            const uint32_t l_RingChunks = (3 * l_CenterChunks) / 4;
+            const uint32_t l_TotalChunks = l_CenterChunks + l_RingChunks * (m_ImguiNumCascades - 1);
+
+			vkCmdDrawMeshTasksEXT(l_Frame.commandBuffer, l_TotalChunks, 1, 1);
 
             imguiDraw(l_FrameIndex);
 

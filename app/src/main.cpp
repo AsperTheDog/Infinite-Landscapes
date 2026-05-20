@@ -9,7 +9,7 @@ int main(int, char**)
 #else
 	spdlog::set_level(spdlog::level::err);
 #endif
-	spdlog::set_pattern("[%H:%M:%S.%e] [%^%l%$] [thread %t] %v");
+	spdlog::set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
 
 	Engine engine{};
 #ifndef NDEBUG
