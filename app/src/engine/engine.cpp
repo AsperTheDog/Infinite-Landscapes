@@ -61,7 +61,7 @@ static void destroyDebugUtilsMessengerEXT(const VkInstance p_Instance, const VkD
     }
 }
 
-static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(const VkDebugUtilsMessageSeverityFlagBitsEXT p_MessageSeverity, VkDebugUtilsMessageTypeFlagsEXT p_MessageType, const VkDebugUtilsMessengerCallbackDataEXT* p_CallbackData, void* p_UserData)
+static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(const VkDebugUtilsMessageSeverityFlagBitsEXT p_MessageSeverity, const VkDebugUtilsMessageTypeFlagsEXT p_MessageType, const VkDebugUtilsMessengerCallbackDataEXT* p_CallbackData, void* p_UserData)
 {
     if (p_MessageSeverity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT)
     {
@@ -399,19 +399,20 @@ void Engine::createDepthResources(const VkExtent2D p_Extent)
     spdlog::debug("Created depth image (ID: {}) and view (ID: {})", fmt::ptr(m_DepthImage), fmt::ptr(m_DepthImageView));
 }
 
-void Engine::createStorageBuffer(const VkDeviceSize p_Size, const VkBufferUsageFlags p_ExtraUsage, StorageBuffer& p_Out) const
+Engine::StorageBuffer Engine::createStorageBuffer(const VkDeviceSize p_Size, const VkBufferUsageFlags p_ExtraUsage) const
 {
-    p_Out.size = p_Size;
+	StorageBuffer l_Out{};
+    l_Out.size = p_Size;
     const VkBufferCreateInfo l_BufInfo{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = p_Size,
         .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | p_ExtraUsage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE
     };
-    VULKAN_TRY(m_DeviceTable.vkCreateBuffer(m_Device, &l_BufInfo, nullptr, &p_Out.buffer));
+    VULKAN_TRY(m_DeviceTable.vkCreateBuffer(m_Device, &l_BufInfo, nullptr, &l_Out.buffer));
 
     VkMemoryRequirements l_Reqs;
-    m_DeviceTable.vkGetBufferMemoryRequirements(m_Device, p_Out.buffer, &l_Reqs);
+    m_DeviceTable.vkGetBufferMemoryRequirements(m_Device, l_Out.buffer, &l_Reqs);
 
     VkMemoryAllocateFlagsInfo l_AllocFlags{
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
@@ -423,15 +424,16 @@ void Engine::createStorageBuffer(const VkDeviceSize p_Size, const VkBufferUsageF
         .allocationSize = l_Reqs.size,
         .memoryTypeIndex = findMemoryType(l_Reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
     };
-    VULKAN_TRY(m_DeviceTable.vkAllocateMemory(m_Device, &l_AllocInfo, nullptr, &p_Out.memory));
-    VULKAN_TRY(m_DeviceTable.vkBindBufferMemory(m_Device, p_Out.buffer, p_Out.memory, 0));
+    VULKAN_TRY(m_DeviceTable.vkAllocateMemory(m_Device, &l_AllocInfo, nullptr, &l_Out.memory));
+    VULKAN_TRY(m_DeviceTable.vkBindBufferMemory(m_Device, l_Out.buffer, l_Out.memory, 0));
 
     const VkBufferDeviceAddressInfo l_AddrInfo{
         .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-        .buffer = p_Out.buffer
+        .buffer = l_Out.buffer
     };
-    p_Out.address = m_DeviceTable.vkGetBufferDeviceAddress(m_Device, &l_AddrInfo);
-    spdlog::debug("Created storage buffer (ID: {}, size: {} bytes, addr: 0x{:x})", fmt::ptr(p_Out.buffer), p_Out.size, p_Out.address);
+    l_Out.address = m_DeviceTable.vkGetBufferDeviceAddress(m_Device, &l_AddrInfo);
+    spdlog::debug("Created storage buffer (ID: {}, size: {} bytes, addr: 0x{:x})", fmt::ptr(l_Out.buffer), l_Out.size, l_Out.address);
+    return l_Out;
 }
 
 VkShaderModule Engine::createShaderModule(const std::vector<uint32_t>& p_Spirv) const
@@ -695,40 +697,40 @@ void Engine::init(const bool p_DebugEnabled)
     // Initialize frame objects
     {
         m_Frames.resize(m_FramesInFlight);
-		for (FrameData& l_Frame : m_Frames)
+		for (auto& [commandPool, commandBuffer, imageAvailableSemaphore, inFlightFence, nodeBufferA, nodeBufferB, leafBuffer, hashBuffer, indirectBuffer] : m_Frames)
 		{
 			VkCommandPoolCreateInfo l_CommandPoolCreateInfo{ .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
 			l_CommandPoolCreateInfo.queueFamilyIndex = m_QueueFamilyIndex;
 			l_CommandPoolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-			VULKAN_TRY(m_DeviceTable.vkCreateCommandPool(m_Device, &l_CommandPoolCreateInfo, nullptr, &l_Frame.commandPool));
-			spdlog::info("Created command pool (ID: {}) for frame", fmt::ptr(l_Frame.commandPool));
+			VULKAN_TRY(m_DeviceTable.vkCreateCommandPool(m_Device, &l_CommandPoolCreateInfo, nullptr, &commandPool));
+			spdlog::info("Created command pool (ID: {}) for frame", fmt::ptr(commandPool));
 
 			VkCommandBufferAllocateInfo l_CommandBufferAllocateInfo{ .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-			l_CommandBufferAllocateInfo.commandPool = l_Frame.commandPool;
+			l_CommandBufferAllocateInfo.commandPool = commandPool;
 			l_CommandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 			l_CommandBufferAllocateInfo.commandBufferCount = 1;
-			VULKAN_TRY(m_DeviceTable.vkAllocateCommandBuffers(m_Device, &l_CommandBufferAllocateInfo, &l_Frame.commandBuffer));
-			spdlog::info("Allocated command buffer (ID: {}) from command pool (ID: {}) for frame", fmt::ptr(l_Frame.commandBuffer), fmt::ptr(l_Frame.commandPool));
+			VULKAN_TRY(m_DeviceTable.vkAllocateCommandBuffers(m_Device, &l_CommandBufferAllocateInfo, &commandBuffer));
+			spdlog::info("Allocated command buffer (ID: {}) from command pool (ID: {}) for frame", fmt::ptr(commandBuffer), fmt::ptr(commandPool));
 			
 			VkSemaphoreCreateInfo l_SemaphoreCreateInfo{};
 			l_SemaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-			VULKAN_TRY(m_DeviceTable.vkCreateSemaphore(m_Device, &l_SemaphoreCreateInfo, nullptr, &l_Frame.imageAvailableSemaphore));
-			spdlog::info("Created semaphore (ID: {}) for frame image availability", fmt::ptr(l_Frame.imageAvailableSemaphore));
+			VULKAN_TRY(m_DeviceTable.vkCreateSemaphore(m_Device, &l_SemaphoreCreateInfo, nullptr, &imageAvailableSemaphore));
+			spdlog::info("Created semaphore (ID: {}) for frame image availability", fmt::ptr(imageAvailableSemaphore));
 			
 			VkFenceCreateInfo l_FenceCreateInfo{ .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 			l_FenceCreateInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-			VULKAN_TRY(m_DeviceTable.vkCreateFence(m_Device, &l_FenceCreateInfo, nullptr, &l_Frame.inFlightFence));
-			spdlog::info("Created fence (ID: {}) for frame in-flight synchronization", fmt::ptr(l_Frame.inFlightFence));
+			VULKAN_TRY(m_DeviceTable.vkCreateFence(m_Device, &l_FenceCreateInfo, nullptr, &inFlightFence));
+			spdlog::info("Created fence (ID: {}) for frame in-flight synchronization", fmt::ptr(inFlightFence));
 
 			constexpr VkDeviceSize l_NodeBufSize = 16 + s_MaxNodes  * 16;
 			constexpr VkDeviceSize l_LeafBufSize = 16 + s_MaxLeaves * 16;
 			constexpr VkDeviceSize l_HashBufSize = s_HashSize * 16;
 			constexpr VkDeviceSize l_IndirectSize = sizeof(uint32_t) * 3;
-			createStorageBuffer(l_NodeBufSize, 0, l_Frame.nodeBufferA);
-			createStorageBuffer(l_NodeBufSize, 0, l_Frame.nodeBufferB);
-			createStorageBuffer(l_LeafBufSize, 0, l_Frame.leafBuffer);
-			createStorageBuffer(l_HashBufSize, 0, l_Frame.hashBuffer);
-			createStorageBuffer(l_IndirectSize, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,  l_Frame.indirectBuffer);
+			nodeBufferA = createStorageBuffer(l_NodeBufSize, 0);
+			nodeBufferB = createStorageBuffer(l_NodeBufSize, 0);
+            leafBuffer = createStorageBuffer(l_LeafBufSize, 0);
+			hashBuffer = createStorageBuffer(l_HashBufSize, 0);
+			indirectBuffer = createStorageBuffer(l_IndirectSize, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
 		}
     }
 
