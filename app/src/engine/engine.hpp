@@ -38,7 +38,7 @@ private:
 	void destroyDepthResources();
 
 	Window m_Window{};
-	Camera m_Camera{glm::vec3{0.f, -100.f, 0.f}, glm::vec3{0.0f, 0.0f, -1.0f}};
+	Camera m_Camera{glm::vec3{0.f, -1000.f, 0.f}, glm::vec3{0.0f, 0.0f, -1.0f}};
 
 	VkInstance m_Instance = VK_NULL_HANDLE;
 	VkDebugUtilsMessengerEXT m_DebugMessenger = VK_NULL_HANDLE;
@@ -88,7 +88,7 @@ private:
 	VkDescriptorPool m_ImguiDescriptorPool = VK_NULL_HANDLE;
 	float m_ImguiRootSize = 16000.0f;
 	uint32_t m_ImguiMaxDepth = 12;
-	float m_ImguiMeshletPixelTarget = 200.0f;
+	float m_ImguiMeshletPixelTarget = 85.0f;
 	bool m_ImguiWireframe = false;
 	bool m_ImguiEdgeSnap = true;
 	

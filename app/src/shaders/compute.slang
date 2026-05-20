@@ -107,6 +107,19 @@ bool SphereVisible(float3 center, float radius, float4 planes[6])
     return true;
 }
 
+bool AABBVisible(float3 boxMin, float3 boxMax, float4 planes[6])
+{
+    for (int i = 0; i < 5; ++i)
+    {
+        float3 p = float3(
+            planes[i].x > 0.0 ? boxMax.x : boxMin.x,
+            planes[i].y > 0.0 ? boxMax.y : boxMin.y,
+            planes[i].z > 0.0 ? boxMax.z : boxMin.z);
+        if (dot(planes[i].xyz, p) + planes[i].w < 0.0) return false;
+    }
+    return true;
+}
+
 float NodeScreenDiameter(float3 center, float radius)
 {
     float3 oR = radius * cubo.cameraRight.xyz;
@@ -139,14 +152,21 @@ void refineMain(uint3 dispatchID : SV_DispatchThreadID)
     if (node.depth != cubo.currentDepth) return;
 
     float cellSize = CellSize(node.depth, cubo.rootSize);
-    float3 center = float3(node.origin.x + cellSize * 0.5, 0.0, node.origin.y + cellSize * 0.5);
-    float  radius = cellSize * 0.7071 + 4.0;
+    float3 center  = float3(node.origin.x + cellSize * 0.5, 0.0, node.origin.y + cellSize * 0.5);
+    float  xzRadius = cellSize * 0.7071;
+
+    const float kTerrainHalfHeight = 2000.0;
+    float3 boxMin = float3(node.origin.x, -kTerrainHalfHeight, node.origin.y);
+    float3 boxMax = float3(node.origin.x + cellSize, kTerrainHalfHeight, node.origin.y + cellSize);
 
     float4 planes[6];
     ExtractFrustumPlanes(cubo.frustumViewProjMatrix, planes);
-    if (!SphereVisible(center, radius, planes)) return;
+    if (!AABBVisible(boxMin, boxMax, planes)) return;
 
-    float diameterPx = NodeScreenDiameter(center, radius);
+    float diameterPx = NodeScreenDiameter(center, xzRadius);
+
+    if (diameterPx >= 0.0 && diameterPx < 1.0) return;
+
     bool shouldSplit = (node.depth < cubo.maxDepth) && (diameterPx < 0.0 || diameterPx > cubo.meshletPixelTarget);
 
     if (shouldSplit)

@@ -28,7 +28,7 @@ struct TaskPayload
 
 groupshared TaskPayload s_payload;
 
-// Redundant for now, but left for potential future growth
+// Redundant for now, but left for potential future growths
 [shader("amplification")]
 [numthreads(1, 1, 1)]
 void taskMain(uint3 groupID : SV_GroupID)
@@ -52,8 +52,7 @@ uint UnpackNeighborDepth(uint packed, uint edge)
     return (packed >> (edge * 4u)) & 0xFu;
 }
 
-float SnapEdgeHeight(uint p_edge, uint deltaDepth,
-                     float3 edgeOrigin, float3 edgeTangent, float edgeLength)
+float SnapEdgeHeight(uint p_edge, uint deltaDepth, float3 edgeOrigin, float3 edgeTangent, float edgeLength)
 {
     float invSegs = 1.0 / float(SEGS);
 
@@ -61,7 +60,7 @@ float SnapEdgeHeight(uint p_edge, uint deltaDepth,
     {
         float t = float(p_edge) * invSegs;
         float3 p = edgeOrigin + edgeTangent * (t * edgeLength);
-        return ComputeHeight(p.x, p.z);
+        return GetTerrainData(float2(p.x, p.z), 6).height;
     }
 
     uint R = 1u << deltaDepth;
@@ -72,8 +71,8 @@ float SnapEdgeHeight(uint p_edge, uint deltaDepth,
     float t_hi = float(p_hi) * invSegs;
     float3 pLo = edgeOrigin + edgeTangent * (t_lo * edgeLength);
     float3 pHi = edgeOrigin + edgeTangent * (t_hi * edgeLength);
-    float yLo = ComputeHeight(pLo.x, pLo.z);
-    float yHi = ComputeHeight(pHi.x, pHi.z);
+    float yLo = GetTerrainData(float2(pLo.x, pLo.z), 6).height;
+    float yHi = GetTerrainData(float2(pHi.x, pHi.z), 6).height;
     float frac = float(p_edge - p_lo) / float(R);
     return lerp(yLo, yHi, frac);
 }
@@ -84,7 +83,7 @@ float SnapEdgeHeight(uint p_edge, uint deltaDepth,
 void meshMain(
     in payload TaskPayload payload,
     OutputVertices<VertexOut, 128> verts,
-    OutputIndices<uint3, 128>      indices,
+    OutputIndices<uint3, 128> indices,
     uint  threadID : SV_GroupIndex)
 {
     SetMeshOutputCounts(V * V, SEGS * SEGS * 2u);
@@ -106,7 +105,7 @@ void meshMain(
             float2 norm = float2(vertX, vertY) * invSeg;
             float3 worldPos = origin3 + float3(norm.x * size, 0.0, norm.y * size);
 
-            float worldY = ComputeHeight(worldPos.x, worldPos.z);
+            float worldY = GetTerrainData(float2(worldPos.x, worldPos.z), 6).height;
 
             bool snap = (gubo.edgeSnapEnabled != 0u);
             bool onWest = snap && (vertX == 0u);

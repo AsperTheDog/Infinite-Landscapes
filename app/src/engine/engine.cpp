@@ -295,7 +295,7 @@ void Engine::recreateSwapchain(Window::Size p_Size)
     l_SwapchainCreateInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     l_SwapchainCreateInfo.preTransform = l_Capabilities.currentTransform;
     l_SwapchainCreateInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    l_SwapchainCreateInfo.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+    l_SwapchainCreateInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
     l_SwapchainCreateInfo.clipped = VK_TRUE;
     l_SwapchainCreateInfo.oldSwapchain = m_Swapchain;
 
@@ -697,40 +697,40 @@ void Engine::init(const bool p_DebugEnabled)
     // Initialize frame objects
     {
         m_Frames.resize(m_FramesInFlight);
-		for (auto& [commandPool, commandBuffer, imageAvailableSemaphore, inFlightFence, nodeBufferA, nodeBufferB, leafBuffer, hashBuffer, indirectBuffer] : m_Frames)
+		for (FrameData& l_Frame : m_Frames)
 		{
 			VkCommandPoolCreateInfo l_CommandPoolCreateInfo{ .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
 			l_CommandPoolCreateInfo.queueFamilyIndex = m_QueueFamilyIndex;
 			l_CommandPoolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-			VULKAN_TRY(m_DeviceTable.vkCreateCommandPool(m_Device, &l_CommandPoolCreateInfo, nullptr, &commandPool));
-			spdlog::info("Created command pool (ID: {}) for frame", fmt::ptr(commandPool));
+			VULKAN_TRY(m_DeviceTable.vkCreateCommandPool(m_Device, &l_CommandPoolCreateInfo, nullptr, &l_Frame.commandPool));
+			spdlog::info("Created command pool (ID: {}) for frame", fmt::ptr(l_Frame.commandPool));
 
 			VkCommandBufferAllocateInfo l_CommandBufferAllocateInfo{ .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-			l_CommandBufferAllocateInfo.commandPool = commandPool;
+			l_CommandBufferAllocateInfo.commandPool = l_Frame.commandPool;
 			l_CommandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 			l_CommandBufferAllocateInfo.commandBufferCount = 1;
-			VULKAN_TRY(m_DeviceTable.vkAllocateCommandBuffers(m_Device, &l_CommandBufferAllocateInfo, &commandBuffer));
-			spdlog::info("Allocated command buffer (ID: {}) from command pool (ID: {}) for frame", fmt::ptr(commandBuffer), fmt::ptr(commandPool));
+			VULKAN_TRY(m_DeviceTable.vkAllocateCommandBuffers(m_Device, &l_CommandBufferAllocateInfo, &l_Frame.commandBuffer));
+			spdlog::info("Allocated command buffer (ID: {}) from command pool (ID: {}) for frame", fmt::ptr(l_Frame.commandBuffer), fmt::ptr(l_Frame.commandPool));
 			
 			VkSemaphoreCreateInfo l_SemaphoreCreateInfo{};
 			l_SemaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-			VULKAN_TRY(m_DeviceTable.vkCreateSemaphore(m_Device, &l_SemaphoreCreateInfo, nullptr, &imageAvailableSemaphore));
-			spdlog::info("Created semaphore (ID: {}) for frame image availability", fmt::ptr(imageAvailableSemaphore));
+			VULKAN_TRY(m_DeviceTable.vkCreateSemaphore(m_Device, &l_SemaphoreCreateInfo, nullptr, &l_Frame.imageAvailableSemaphore));
+			spdlog::info("Created semaphore (ID: {}) for frame image availability", fmt::ptr(l_Frame.imageAvailableSemaphore));
 			
 			VkFenceCreateInfo l_FenceCreateInfo{ .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 			l_FenceCreateInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-			VULKAN_TRY(m_DeviceTable.vkCreateFence(m_Device, &l_FenceCreateInfo, nullptr, &inFlightFence));
-			spdlog::info("Created fence (ID: {}) for frame in-flight synchronization", fmt::ptr(inFlightFence));
+			VULKAN_TRY(m_DeviceTable.vkCreateFence(m_Device, &l_FenceCreateInfo, nullptr, &l_Frame.inFlightFence));
+			spdlog::info("Created fence (ID: {}) for frame in-flight synchronization", fmt::ptr(l_Frame.inFlightFence));
 
 			constexpr VkDeviceSize l_NodeBufSize = 16 + s_MaxNodes  * 16;
 			constexpr VkDeviceSize l_LeafBufSize = 16 + s_MaxLeaves * 16;
 			constexpr VkDeviceSize l_HashBufSize = s_HashSize * 16;
 			constexpr VkDeviceSize l_IndirectSize = sizeof(uint32_t) * 3;
-			nodeBufferA = createStorageBuffer(l_NodeBufSize, 0);
-			nodeBufferB = createStorageBuffer(l_NodeBufSize, 0);
-            leafBuffer = createStorageBuffer(l_LeafBufSize, 0);
-			hashBuffer = createStorageBuffer(l_HashBufSize, 0);
-			indirectBuffer = createStorageBuffer(l_IndirectSize, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+			l_Frame.nodeBufferA = createStorageBuffer(l_NodeBufSize, 0);
+			l_Frame.nodeBufferB = createStorageBuffer(l_NodeBufSize, 0);
+            l_Frame.leafBuffer = createStorageBuffer(l_LeafBufSize, 0);
+			l_Frame.hashBuffer = createStorageBuffer(l_HashBufSize, 0);
+			l_Frame.indirectBuffer = createStorageBuffer(l_IndirectSize, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
 		}
     }
 
@@ -1065,9 +1065,18 @@ void Engine::run()
             vkBeginCommandBuffer(l_Frame.commandBuffer, &l_BeginInfo);
 
             const float l_SmallestLeaf = m_ImguiRootSize / static_cast<float>(1u << m_ImguiMaxDepth);
+
+            // Snap rootOrigin to a coarser step than smallestLeaf so that chunks at
+            // depths within ±kStabilityLevels of the smallest stay WORLD-STABLE across
+            // snaps. A depth-D chunk is stable iff (snap step) is a multiple of
+            // cellSize_D = smallestLeaf * 2^(maxDepth - D). Snapping at
+            // 2^kStabilityLevels * smallestLeaf stabilizes everything at depth
+            // (maxDepth - kStabilityLevels) or finer — i.e. the close LOD pyramid.
+            constexpr uint32_t kStabilityLevels = 4;
+            const float l_SnapStep = l_SmallestLeaf * static_cast<float>(1u << kStabilityLevels);
             const glm::vec3 l_CamPos = m_Camera.getPosition();
             const glm::vec2 l_CamXZ(l_CamPos.x, l_CamPos.z);
-            const glm::vec2 l_RootOrigin = glm::floor(l_CamXZ / l_SmallestLeaf) * l_SmallestLeaf - glm::vec2(m_ImguiRootSize * 0.5f);
+            const glm::vec2 l_RootOrigin = glm::floor(l_CamXZ / l_SnapStep) * l_SnapStep - glm::vec2(m_ImguiRootSize * 0.5f);
 
             RootInit l_RootInit{
 	            .count = 1u,
