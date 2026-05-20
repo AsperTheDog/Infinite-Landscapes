@@ -14,7 +14,7 @@
 Camera::Camera(const glm::vec3 pos, const glm::vec3 dir, const float fov, const float near, const float far)
 	: m_Position(pos), m_Front(dir), m_fov(fov), m_near(near), m_far(far)
 {
-
+	calculateRightVector();
 }
 
 void Camera::move(const glm::vec3 dir)
@@ -273,30 +273,9 @@ void Camera::updateEvents(const float delta)
 	}
 }
 
-Camera::Frustum& Camera::getFrustum()
+glm::mat4& Camera::getFrustumVPMatrix()
 {
-    if (!m_Frustum.frustumDirty) 
-        return m_Frustum;
-
-    glm::mat4 l_VP = glm::transpose(getVPMatrix());
-
-    m_Frustum.planes[0] = l_VP[3] + l_VP[0];
-    m_Frustum.planes[1] = l_VP[3] - l_VP[0];
-    m_Frustum.planes[2] = l_VP[3] + l_VP[1];
-    m_Frustum.planes[3] = l_VP[3] - l_VP[1];
-    m_Frustum.planes[4] = l_VP[3] + l_VP[2];
-    m_Frustum.planes[5] = l_VP[3] - l_VP[2];
-
-    for (glm::vec4& plane : m_Frustum.planes)
-    {
-        glm::vec3 l_Normal = glm::vec3(plane);
-        const float l_Length = glm::length(l_Normal);
-        plane /= l_Length;
-    }
-
-    m_Frustum.frustumDirty = false;
-
-    return m_Frustum;
+    return m_FreezeFrustum ? m_FrozenVPMatrix : getVPMatrix();
 }
 
 void Camera::calculateRightVector()
@@ -320,8 +299,6 @@ void Camera::setViewDirty()
     m_viewDirty = true;
     m_InvViewDirty = true;
     m_InvVPMatrixDirty = true;
-    if (!m_FreezeFrustum)
-        m_Frustum.frustumDirty = true;
 }
 
 void Camera::setProjDirty()
@@ -329,19 +306,13 @@ void Camera::setProjDirty()
     m_projDirty = true;
     m_InvProjDirty = true;
     m_InvVPMatrixDirty = true;
-    if (!m_FreezeFrustum)
-        m_Frustum.frustumDirty = true;
 }
 
 void Camera::setFreezeFrustum(const bool freeze)
 {
     if (freeze && !m_FreezeFrustum)
     {
-        getFrustum();
+        m_FrozenVPMatrix = getVPMatrix();
     }
-	else if (!freeze && m_FreezeFrustum)
-	{
-		m_Frustum.frustumDirty = true;
-	}
     m_FreezeFrustum = freeze;
 }

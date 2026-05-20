@@ -22,8 +22,21 @@ private:
 	void imguiDraw(uint32_t p_FrameIndex);
 	void toggleImgui();
 
+	struct StorageBuffer
+	{
+		VkBuffer buffer = VK_NULL_HANDLE;
+		VkDeviceMemory memory = VK_NULL_HANDLE;
+		VkDeviceAddress address = 0;
+		VkDeviceSize size = 0;
+	};
+
+	void createStorageBuffer(VkDeviceSize p_Size, VkBufferUsageFlags p_ExtraUsage, StorageBuffer& p_Out) const;
+	void destroyStorageBuffer(StorageBuffer& p_Buffer) const;
+	VkShaderModule createShaderModule(const std::vector<uint32_t>& p_Spirv) const;
+	VkPipeline createComputePipeline(VkShaderModule p_Module, VkPipelineLayout p_Layout) const;
+
 	Window m_Window{};
-	Camera m_Camera{glm::vec3{}, glm::vec3{0.0f, 0.0f, -1.0f}};
+	Camera m_Camera{glm::vec3{0.f, -100.f, 0.f}, glm::vec3{0.0f, 0.0f, -1.0f}};
 
 	VkInstance m_Instance = VK_NULL_HANDLE;
 	VkDebugUtilsMessengerEXT m_DebugMessenger = VK_NULL_HANDLE;
@@ -52,17 +65,33 @@ private:
 
 		VkSemaphore imageAvailableSemaphore = VK_NULL_HANDLE;
 		VkFence inFlightFence = VK_NULL_HANDLE;
+
+		StorageBuffer nodeBufferA{};
+		StorageBuffer nodeBufferB{};
+		StorageBuffer leafBuffer{};
+		StorageBuffer hashBuffer{};
+		StorageBuffer indirectBuffer{};
 	};
 	std::vector<FrameData> m_Frames;
 
 	VkPipeline m_MeshPipeline = VK_NULL_HANDLE;
-	VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
+	VkPipelineLayout m_GraphicsPipelineLayout = VK_NULL_HANDLE;
 
-	bool m_ImguiActive = false;
+	VkPipelineLayout m_ComputePipelineLayout = VK_NULL_HANDLE;
+	VkPipeline m_RefinePipeline = VK_NULL_HANDLE;
+	VkPipeline m_PrepareIndirectPipeline = VK_NULL_HANDLE;
+	VkPipeline m_HashBuildPipeline = VK_NULL_HANDLE;
+	VkPipeline m_NeighborLookupPipeline = VK_NULL_HANDLE;
+
+	static constexpr uint32_t s_MaxNodes  = 65536;
+	static constexpr uint32_t s_MaxLeaves = 65536;
+	static constexpr uint32_t s_HashSize  = 131072;
+
+	bool m_ImguiActive = true;
 	VkDescriptorPool m_ImguiDescriptorPool = VK_NULL_HANDLE;
-	uint32_t m_ImguiGridSize = 64;
-	float m_ImguiBaseBlockScale = 8.0f;
-	float m_ImguiMeshletPixelTarget = 64.0f;
+	float m_ImguiRootSize = 16000.0f;
+	uint32_t m_ImguiMaxDepth = 12;
+	float m_ImguiMeshletPixelTarget = 200.0f;
 	bool m_ImguiWireframe = false;
 	bool m_ImguiEdgeSnap = true;
 

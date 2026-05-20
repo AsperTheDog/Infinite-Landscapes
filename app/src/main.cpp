@@ -7,7 +7,7 @@ int main(int, char**)
 #ifndef NDEBUG
 	spdlog::set_level(spdlog::level::debug);
 #else
-	spdlog::set_level(spdlog::level::err);
+	spdlog::set_level(spdlog::level::info);
 #endif
 	spdlog::set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
 

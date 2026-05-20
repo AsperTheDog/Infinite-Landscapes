@@ -46,23 +46,15 @@ public:
     void setMouseCaptured(bool captured);
     void mouseScrolled(float y);
 
-    [[nodiscard]] bool isFrustumDirty() const { return m_Frustum.frustumDirty; }
-
     void setViewDirty();
     void setProjDirty();
 
     void setFreezeFrustum(bool freeze);
     [[nodiscard]] bool isFrustumFrozen() const { return m_FreezeFrustum; }
 
-	glm::vec4* getFrustumPlanes() { return getFrustum().planes.data(); }
+    glm::mat4& getFrustumVPMatrix();
 
 private:
-    struct Frustum
-    {
-        std::array<glm::vec4, 6> planes;
-        bool frustumDirty = true;
-    };
-    Frustum& getFrustum();
 
 	void calculateRightVector();
 
@@ -92,8 +84,8 @@ private:
 	glm::mat4 m_VPMatrix{};
     bool m_InvVPMatrixDirty = true;
     glm::mat4 m_InvVPMatrix{};
-    Frustum m_Frustum;
     bool m_FreezeFrustum = false;
+    glm::mat4 m_FrozenVPMatrix{};
 
 	//Event tracker
 	bool m_wPressed = false;
