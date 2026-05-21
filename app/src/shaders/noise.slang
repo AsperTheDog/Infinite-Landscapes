@@ -64,7 +64,7 @@ public interface INoise
         float dx = (hR - hL) / (2.0 * normalDist);
         float dy = (hU - hD) / (2.0 * normalDist);
 
-        return normalize(float3(-dx * bumpStrength, -dy * bumpStrength, 1.0));
+        return normalize(float3(-dx * bumpStrength, 1.0, -dy * bumpStrength));
     }
 }
 
@@ -105,7 +105,7 @@ public struct VoronoiNoise : INoise
 
 // Simplex
 
-float simplex(float2 v, float2 scale) {
+float simplex(float2 v, float scale) {
     const float4 C = float4(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
     v = v / scale.x;
 
@@ -139,14 +139,14 @@ float simplex(float2 v, float2 scale) {
     g.y = a0.y * x1.x + h.y * x1.y;
     g.z = a0.z * x2.x + h.z * x2.y;
 
-    float height = 130.0 * dot(m, g);
+    float height = dot(m, g) * 130.0;
 
-    return height * (scale.y);
+    return (height * 0.5 + 0.5);
 }
 
 public struct SimplexiNoise : INoise
 {
-    public float2 scale;
+    public float scale;
     public int octaves;
 
     public float eval(float2 p)
@@ -157,27 +157,45 @@ public struct SimplexiNoise : INoise
 
 // Fractal Simplex
 
-float fractalSimplex(float2 v, float2 scale, int octaves, float lacunarity = 2.0, float gain = 0.5) {
+float fractalSimplex(float2 v, float scale, int octaves, float lacunarity = 2.0, float gain = 0.5) {
     float total = 0.0;
     float amplitude = 1.0;
-    float maxValue = 0.0;
+    float max_amplitude = 0.0;
 
     float2 current_v = v;
 
     [MaxIters(8)]
     for (int i = 0; i < octaves; i++) {
         total += simplex(current_v, scale) * amplitude;
-
-        maxValue += amplitude;
+        max_amplitude += amplitude;
 
         current_v *= lacunarity;
         amplitude *= gain;
     }
 
-    return (total / maxValue);
+    return total / max_amplitude;
 }
 
 public struct FractalSimplexiNoise : INoise
+{
+    public float scale;
+    public int octaves;
+    public float lacunarity;
+    public float gain;
+
+    public float eval(float2 p)
+    {
+        return fractalSimplex(p, scale, octaves, lacunarity, gain);
+    }
+}
+
+// Final noise
+
+float sigmoid(float x) {
+    return 1.0 / (1.0 + exp(-x));
+}
+
+public struct FinaliNoise : INoise
 {
     public float2 scale;
     public int octaves;
@@ -186,6 +204,9 @@ public struct FractalSimplexiNoise : INoise
 
     public float eval(float2 p)
     {
-        return fractalSimplex(p, scale, octaves, lacunarity, gain);
+        float fracHeight = pow(fractalSimplex(p, scale.x, octaves, lacunarity, gain), 2) * scale.y;
+        float macroHeight = simplex(p, scale.x * 5.0);
+        float macroHeightOff = macroHeight * scale.y;
+        return -(fracHeight * macroHeight + macroHeightOff);
     }
 }

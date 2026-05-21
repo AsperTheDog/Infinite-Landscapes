@@ -12,6 +12,10 @@ struct GraphicsPC
     float scale;
     float height;
     float normalDist;
+    float lacunarity;
+    float gain;
+    float2 snowRange;
+    float2 rockRange;
 };
 [[vk::push_constant]] ConstantBuffer<GraphicsPC> gubo;
 
@@ -56,7 +60,7 @@ uint UnpackNeighborDepth(uint packed, uint edge)
     return (packed >> (edge * 4u)) & 0xFu;
 }
 
-float SnapEdgeHeight(uint p_edge, uint deltaDepth, float3 edgeOrigin, float3 edgeTangent, float edgeLength, float2 scale, float normalDist, float normalStrength)
+float SnapEdgeHeight(uint p_edge, uint deltaDepth, float3 edgeOrigin, float3 edgeTangent, float edgeLength, float2 scale, float normalDist, float normalStrength, float lacunarity, float gain)
 {
     float invSegs = 1.0 / float(SEGS);
 
@@ -64,7 +68,7 @@ float SnapEdgeHeight(uint p_edge, uint deltaDepth, float3 edgeOrigin, float3 edg
     {
         float t = float(p_edge) * invSegs;
         float3 p = edgeOrigin + edgeTangent * (t * edgeLength);
-        return GetTerrainData(float2(p.x, p.z), scale, normalDist, normalStrength).height;
+        return GetTerrainData(float2(p.x, p.z), scale, normalDist, normalStrength, lacunarity, gain).height;
     }
 
     uint R = 1u << deltaDepth;
@@ -75,8 +79,8 @@ float SnapEdgeHeight(uint p_edge, uint deltaDepth, float3 edgeOrigin, float3 edg
     float t_hi = float(p_hi) * invSegs;
     float3 pLo = edgeOrigin + edgeTangent * (t_lo * edgeLength);
     float3 pHi = edgeOrigin + edgeTangent * (t_hi * edgeLength);
-    float yLo = GetTerrainData(float2(pLo.x, pLo.z), scale, normalDist, normalStrength).height;
-    float yHi = GetTerrainData(float2(pHi.x, pHi.z), scale, normalDist, normalStrength).height;
+    float yLo = GetTerrainData(float2(pLo.x, pLo.z), scale, normalDist, normalStrength, lacunarity, gain).height;
+    float yHi = GetTerrainData(float2(pHi.x, pHi.z), scale, normalDist, normalStrength, lacunarity, gain).height;
     float frac = float(p_edge - p_lo) / float(R);
     return lerp(yLo, yHi, frac);
 }
@@ -110,7 +114,7 @@ void meshMain(
             float2 norm = float2(vertX, vertY) * invSeg;
             float3 worldPos = origin3 + float3(norm.x * size, 0.0, norm.y * size);
 
-            TerrainData tdata = GetTerrainData(float2(worldPos.x, worldPos.z), scale, gubo.normalDist, 1.0);
+            TerrainData tdata = GetTerrainData(float2(worldPos.x, worldPos.z), scale, gubo.normalDist, 1.0, gubo.lacunarity, gubo.gain);
             float worldY = tdata.height;
 
             bool snap = (gubo.edgeSnapEnabled != 0u);
@@ -123,25 +127,25 @@ void meshMain(
             {
                 uint nD = UnpackNeighborDepth(payload.neighborDepths, 2u);
                 uint dD = (payload.depth > nD) ? min(payload.depth - nD, 3u) : 0u;
-                worldY = SnapEdgeHeight(vertX, dD, origin3, float3(1, 0, 0), size, scale, gubo.normalDist, 1.0);
+                worldY = SnapEdgeHeight(vertX, dD, origin3, float3(1, 0, 0), size, scale, gubo.normalDist, 1.0, gubo.lacunarity, gubo.gain);
             }
             else if (onNorth)
             {
                 uint nD = UnpackNeighborDepth(payload.neighborDepths, 3u);
                 uint dD = (payload.depth > nD) ? min(payload.depth - nD, 3u) : 0u;
-                worldY = SnapEdgeHeight(vertX, dD, origin3 + float3(0, 0, size), float3(1, 0, 0), size, scale, gubo.normalDist, 1.0);
+                worldY = SnapEdgeHeight(vertX, dD, origin3 + float3(0, 0, size), float3(1, 0, 0), size, scale, gubo.normalDist, 1.0, gubo.lacunarity, gubo.gain);
             }
             else if (onWest)
             {
                 uint nD = UnpackNeighborDepth(payload.neighborDepths, 0u);
                 uint dD = (payload.depth > nD) ? min(payload.depth - nD, 3u) : 0u;
-                worldY = SnapEdgeHeight(vertY, dD, origin3, float3(0, 0, 1), size, scale, gubo.normalDist, 1.0);
+                worldY = SnapEdgeHeight(vertY, dD, origin3, float3(0, 0, 1), size, scale, gubo.normalDist, 1.0, gubo.lacunarity, gubo.gain);
             }
             else if (onEast)
             {
                 uint nD = UnpackNeighborDepth(payload.neighborDepths, 1u);
                 uint dD = (payload.depth > nD) ? min(payload.depth - nD, 3u) : 0u;
-                worldY = SnapEdgeHeight(vertY, dD, origin3 + float3(size, 0, 0), float3(0, 0, 1), size, scale, gubo.normalDist, 1.0);
+                worldY = SnapEdgeHeight(vertY, dD, origin3 + float3(size, 0, 0), float3(0, 0, 1), size, scale, gubo.normalDist, 1.0, gubo.lacunarity, gubo.gain);
             }
 
             worldPos.y = worldY;
@@ -178,11 +182,11 @@ void meshMain(
 [shader("fragment")]
 float4 fragmentMain(VertexOut vin) : SV_Target
 {
-    float3 color = GetTerrainColor(vin.world_pos, vin.normal);
+    float3 color = GetTerrainColor(vin.world_pos, vin.normal, gubo.scale, gubo.snowRange * gubo.height, gubo.rockRange);
 
     float3 sunDir = normalize(float3(1.0, -1.0, 0.5));
     float NdotL = saturate(dot(vin.normal, sunDir));
-    float3 litColor = float3(1.0, 1.0, 1.0) * NdotL;
+    float3 litColor = color * NdotL;
     litColor += color * 0.1;
 
     return float4(litColor, 1.0);

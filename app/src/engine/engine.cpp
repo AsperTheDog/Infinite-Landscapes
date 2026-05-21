@@ -43,6 +43,10 @@ struct GraphicsPC {
     alignas(4) float scale;
     alignas(4) float height;
     alignas(4) float normalDist;
+    alignas(4) float lacunarity;
+	alignas(4) float gain;
+    alignas(8) glm::vec2 snowRange;
+    alignas(8) glm::vec2 rockRange;
 };
 
 static VkResult createDebugUtilsMessengerEXT(const VkInstance p_Instance, const VkDebugUtilsMessengerCreateInfoEXT* p_CreateInfo, const VkAllocationCallbacks* p_Allocator, VkDebugUtilsMessengerEXT* p_DebugMessenger)
@@ -298,7 +302,7 @@ void Engine::recreateSwapchain(Window::Size p_Size)
     l_SwapchainCreateInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     l_SwapchainCreateInfo.preTransform = l_Capabilities.currentTransform;
     l_SwapchainCreateInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    l_SwapchainCreateInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    l_SwapchainCreateInfo.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
     l_SwapchainCreateInfo.clipped = VK_TRUE;
     l_SwapchainCreateInfo.oldSwapchain = m_Swapchain;
 
@@ -1003,9 +1007,12 @@ void Engine::imguiDraw(const uint32_t p_FrameIndex)
 
         ImGui::Separator();
 		ImGui::DragFloat("Noise Scale", &m_ImguiScale, 1.f, 1.0f, 1000.f, "%.3f");
-        ImGui::DragFloat("Noise Height", &m_ImguiHeight, 10.f, 10.0f, 1000.f, "%.3f");
+        ImGui::DragFloat("Noise Height", &m_ImguiHeight, 10.f, 1.0f, 200.f, "%.3f");
+		ImGui::DragFloat("Noise Lacunarity", &m_ImguiLacunarity, 0.1f, 1.0f, 4.0f, "%.3f");
+		ImGui::DragFloat("Noise Gain", &m_ImguiGain, 0.01f, 0.0f, 1.0f, "%.3f");
         ImGui::DragFloat("Normal Distance", &m_ImguiNormalDist, 0.001f, 0.001f, 5.f, "%.3f");
-
+		ImGui::DragFloat2("Snow Range", &m_ImguiSnowRange.x, 0.01f, 0.00f, 2.0f, "%.3f");
+        ImGui::DragFloat2("Rock Range", &m_ImguiRockRange.x, 0.05f, 0.00f, 1.0f, "%.3f");
 		ImGui::End();
     }
 
@@ -1240,7 +1247,11 @@ void Engine::run()
                 .edgeSnapEnabled = m_ImguiEdgeSnap ? 1u : 0u,
 				.scale = m_ImguiScale,
 				.height = m_ImguiHeight,
-				.normalDist = m_ImguiNormalDist
+				.normalDist = m_ImguiNormalDist,
+				.lacunarity = m_ImguiLacunarity,
+				.gain = m_ImguiGain,
+				.snowRange = m_ImguiSnowRange,
+				.rockRange = m_ImguiRockRange
             };
 
             vkCmdSetScissor(l_Frame.commandBuffer, 0, 1, &scissor);

@@ -11,7 +11,7 @@ public:
 		glm::mat4 invPVMatrix;
 	};
 
-	Camera(glm::vec3 pos, glm::vec3 dir, float fov = 70.0f, float near = 0.1f, float far = 10000.0f);
+	Camera(glm::vec3 pos, glm::vec3 dir, float fov = 70.0f, float near = 0.1f, float far = 20000.0f);
 
 	void move(glm::vec3 dir);
 	void lookAt(glm::vec3 target);
