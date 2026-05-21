@@ -6,4 +6,4 @@ A project to make full use of mesh shaders to create procedurally generated land
 
 # Dependencies
 
-The system assumes you have the Vulkan SDK installed, everything else should be automatically downloaded when using CMake
+The system assumes you have the Vulkan SDK installed, everything else should be automatically downloaded when using CMake. Do make sure to clone with --recursive though, so you also download ImGui
